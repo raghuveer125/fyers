@@ -6,3 +6,4 @@ websocket-client
 python-dotenv
 fyers-apiv3
 setuptools
+psycopg2-binary

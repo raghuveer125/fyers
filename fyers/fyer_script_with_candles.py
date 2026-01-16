@@ -24,12 +24,24 @@ load_dotenv()
 CLIENT_ID = os.getenv("FYERS_APP_ID")
 SECRET_KEY = os.getenv("FYERS_SECRET_KEY")
 REDIRECT_URI = os.getenv("FYERS_REDIRECT_URI")
+SYMBOLS_FILE = os.getenv("SYMBOLS_FILE", "symbols.json")
 
-symbols = [
-    "NSE:RELIANCE-EQ","NSE:TCS-EQ","NSE:INFY-EQ","NSE:HDFCBANK-EQ",
-    "NSE:ICICIBANK-EQ","NSE:SBIN-EQ","NSE:LT-EQ","NSE:ITC-EQ",
-    "NSE:HINDUNILVR-EQ","NSE:AXISBANK-EQ"
-]
+
+def load_symbols():
+    """Load stock symbols from a JSON file (default: symbols.json)."""
+    try:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        path = SYMBOLS_FILE if os.path.isabs(SYMBOLS_FILE) else os.path.join(base_dir, SYMBOLS_FILE)
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("symbols.json must contain a JSON array of symbols")
+        return [s for s in data if isinstance(s, str) and s.strip()]
+    except Exception as e:
+        raise RuntimeError(f"Failed to load symbols from {SYMBOLS_FILE}: {e}")
+
+
+symbols = load_symbols()
 
 # Timeframes in seconds
 TIMEFRAMES = {
@@ -38,6 +50,7 @@ TIMEFRAMES = {
     "15m": 900,
     "30m": 1800,
     "1h": 3600,
+    "4h": 14400,
     "1d": 86400
 }
 
@@ -65,8 +78,10 @@ class CandleBuilder:
         
         if self.timeframe_seconds == 86400:  # 1 day
             return datetime(dt.year, dt.month, dt.day).timestamp()
-        elif self.timeframe_seconds == 3600:  # 1 hour
-            return datetime(dt.year, dt.month, dt.day, dt.hour).timestamp()
+        elif self.timeframe_seconds % 3600 == 0:  # hourly multiples (1h, 4h, etc.)
+            hours = self.timeframe_seconds // 3600
+            hour_slot = (dt.hour // hours) * hours
+            return datetime(dt.year, dt.month, dt.day, hour_slot).timestamp()
         else:  # Minutes
             minutes = self.timeframe_seconds // 60
             minute_slot = (dt.minute // minutes) * minutes
@@ -161,11 +176,12 @@ def publish_candle_to_kafka(candle):
     try:
         symbol = candle['symbol'].replace(':', '_').replace('-', '_')
         timeframe = candle['timeframe']
-        topic = f"candles_{symbol}_{timeframe}"
+        # One topic per stock; timeframe stays inside payload to simplify downstream fan-out
+        topic = f"candles_{symbol}"
         
         producer.send(
             topic,
-            key=candle['symbol'],
+            key=timeframe,
             value=candle
         )
         
