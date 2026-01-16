@@ -4,6 +4,47 @@ from datetime import datetime
 from .engine import BacktestResult
 
 
+def generate_entry_exit_cards(trades: list) -> str:
+    """Generate HTML cards for entry/exit details."""
+    cards_html = ""
+    for i, t in enumerate(trades, 1):
+        pnl_class = "positive" if t["pnl"] > 0 else "negative"
+        exit_time = t.get("exit_time", "-")
+        exit_price = f"{t['exit_price']:.2f}" if t.get("exit_price") else "-"
+        
+        cards_html += f"""
+        <div style="background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 10px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div>
+                    <span style="color: #8b949e; font-size: 11px;">ENTRY TIME</span>
+                    <div style="color: #58a6ff; font-weight: 600; margin-top: 2px;">{t["entry_time"]}</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e; font-size: 11px;">EXIT TIME</span>
+                    <div style="color: #58a6ff; font-weight: 600; margin-top: 2px;">{exit_time}</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e; font-size: 11px;">ENTRY PRICE</span>
+                    <div style="color: #3fb950; font-weight: 600; margin-top: 2px;">₹{t["entry_price"]:.2f}</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e; font-size: 11px;">EXIT PRICE</span>
+                    <div style="color: #f85149; font-weight: 600; margin-top: 2px;">₹{exit_price}</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e; font-size: 11px;">LOTS PURCHASED</span>
+                    <div style="color: #c9d1d9; font-weight: 600; margin-top: 2px;">{t.get("quantity", 1)}</div>
+                </div>
+                <div>
+                    <span style="color: #8b949e; font-size: 11px;">P&L</span>
+                    <div style="color: #{('3fb950' if t['pnl'] >= 0 else 'f85149')}; font-weight: 600; margin-top: 2px;">₹{t['pnl']:.2f}</div>
+                </div>
+            </div>
+        </div>
+        """
+    return cards_html
+
+
 def generate_dashboard(result: BacktestResult, output_path: str = "backtest_report.html") -> str:
     metrics = result.metrics
     config = result.strategy_config
@@ -31,6 +72,7 @@ def generate_dashboard(result: BacktestResult, output_path: str = "backtest_repo
             sell_prices.append(s["price"])
 
     trades_html = ""
+    entry_exit_cards_html = ""
     for i, t in enumerate(result.trades, 1):
         pnl_class = "positive" if t["pnl"] > 0 else "negative"
         exit_price_str = f"{t['exit_price']:.2f}" if t["exit_price"] else "-"
@@ -41,10 +83,17 @@ def generate_dashboard(result: BacktestResult, output_path: str = "backtest_repo
             <td>{t["entry_price"]:.2f}</td>
             <td>{t["exit_time"] or "-"}</td>
             <td>{exit_price_str}</td>
+            <td>{t.get("quantity", 1)}</td>
             <td class="{pnl_class}">{t["pnl"]:.2f}</td>
             <td class="{pnl_class}">{t["pnl_percent"]:.2f}%</td>
         </tr>
         """
+    
+    # Generate entry/exit cards
+    if result.trades:
+        entry_exit_cards_html = generate_entry_exit_cards(result.trades)
+    else:
+        entry_exit_cards_html = '<p style="color: #8b949e;">No trades to display</p>'
 
     config_html = ""
     for key, value in config.items():
@@ -224,14 +273,24 @@ def generate_dashboard(result: BacktestResult, output_path: str = "backtest_repo
                         <th>Entry Price</th>
                         <th>Exit Time</th>
                         <th>Exit Price</th>
+                        <th>Lots</th>
                         <th>P&L</th>
                         <th>P&L %</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {trades_html if trades_html else "<tr><td colspan='7'>No trades executed</td></tr>"}
+                    {trades_html if trades_html else "<tr><td colspan='8'>No trades executed</td></tr>"}
                 </tbody>
             </table>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Entry & Exit Details</div>
+                <div style="margin-top: 15px; font-size: 13px;">
+                    {entry_exit_cards_html}
+                </div>
+            </div>
         </div>
 
         <p class="timestamp">Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>

@@ -387,6 +387,8 @@ def simulator_ui():
             display: flex;
             flex-direction: column;
             gap: 15px;
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
         }
 
         .info-card {
@@ -538,7 +540,13 @@ def simulator_ui():
         <div class="main-grid" id="simulatorArea" style="display:none;">
             <div class="charts">
                 <div class="chart-container">
-                    <h2>Price Chart</h2>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h2 style="margin: 0;">Price Chart</h2>
+                        <select id="chartTypeSelect" onchange="toggleChartType()" style="padding: 6px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9;">
+                            <option value="line">Line</option>
+                            <option value="candlestick">Candlestick</option>
+                        </select>
+                    </div>
                     <div id="priceChart"></div>
                 </div>
                 <div class="chart-container">
@@ -548,6 +556,25 @@ def simulator_ui():
                 <div class="chart-container">
                     <h2>Equity Curve</h2>
                     <div id="equityChart"></div>
+                </div>
+                <div class="chart-container">
+                    <h2>Entry & Exit Details</h2>
+                    <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #21262d;">
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">#</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Entry Time</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Exit Time</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Entry Price</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Exit Price</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Lots</th>
+                                <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody id="entryExitTable">
+                            <tr><td colspan="7" style="padding: 8px; color: #8b949e;">No trades yet</td></tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -640,6 +667,7 @@ def simulator_ui():
         let buySignals = { x: [], y: [] };
         let sellSignals = { x: [], y: [] };
         let strategyType = 'RSI';
+        let chartType = 'line';
 
         function toggleStrategyParams() {
             const strategy = document.getElementById('strategy').value;
@@ -707,18 +735,15 @@ def simulator_ui():
                 paper_bgcolor: '#161b22',
                 plot_bgcolor: '#161b22',
                 font: { color: '#c9d1d9' },
-                xaxis: { gridcolor: '#30363d', linecolor: '#30363d' },
+                xaxis: { gridcolor: '#30363d', linecolor: '#30363d', rangeslider: { visible: false } },
                 yaxis: { gridcolor: '#30363d', linecolor: '#30363d' },
                 margin: { t: 20, r: 20, b: 40, l: 60 },
                 showlegend: true,
-                legend: { x: 0, y: 1, bgcolor: 'rgba(0,0,0,0)' }
+                legend: { x: 0, y: 1, bgcolor: 'rgba(0,0,0,0)' },
+                height: 300
             };
 
-            Plotly.newPlot('priceChart', [
-                { x: [], y: [], type: 'scatter', mode: 'lines', name: 'Price', line: { color: '#58a6ff' } },
-                { x: [], y: [], type: 'scatter', mode: 'markers', name: 'Buy', marker: { color: '#3fb950', size: 12, symbol: 'triangle-up' } },
-                { x: [], y: [], type: 'scatter', mode: 'markers', name: 'Sell', marker: { color: '#f85149', size: 12, symbol: 'triangle-down' } }
-            ], { ...layout, height: 300 });
+            renderPriceChart(layout);
 
             if (strategyType === 'RSI' || strategyType === 'RSI+MACD') {
                 Plotly.newPlot('indicatorChart', [
@@ -745,6 +770,38 @@ def simulator_ui():
             ], { ...layout, height: 200 });
         }
 
+        function renderPriceChart(layout) {
+            if (chartType === 'candlestick') {
+                Plotly.newPlot('priceChart', [
+                    { x: priceData.x, open: priceData.open, high: priceData.high, low: priceData.low, close: priceData.close, type: 'candlestick', name: 'Price', yaxis: 'y' },
+                    { x: buySignals.x, y: buySignals.y, type: 'scatter', mode: 'markers', name: 'Buy', marker: { color: '#3fb950', size: 12, symbol: 'triangle-up' }, yaxis: 'y' },
+                    { x: sellSignals.x, y: sellSignals.y, type: 'scatter', mode: 'markers', name: 'Sell', marker: { color: '#f85149', size: 12, symbol: 'triangle-down' }, yaxis: 'y' }
+                ], { ...layout, height: 300 });
+            } else {
+                Plotly.newPlot('priceChart', [
+                    { x: priceData.x, y: priceData.close, type: 'scatter', mode: 'lines', name: 'Price', line: { color: '#58a6ff' }, yaxis: 'y' },
+                    { x: buySignals.x, y: buySignals.y, type: 'scatter', mode: 'markers', name: 'Buy', marker: { color: '#3fb950', size: 12, symbol: 'triangle-up' }, yaxis: 'y' },
+                    { x: sellSignals.x, y: sellSignals.y, type: 'scatter', mode: 'markers', name: 'Sell', marker: { color: '#f85149', size: 12, symbol: 'triangle-down' }, yaxis: 'y' }
+                ], { ...layout, height: 300 });
+            }
+        }
+
+        function toggleChartType() {
+            chartType = document.getElementById('chartTypeSelect').value;
+            const layout = {
+                paper_bgcolor: '#161b22',
+                plot_bgcolor: '#161b22',
+                font: { color: '#c9d1d9' },
+                xaxis: { gridcolor: '#30363d', linecolor: '#30363d', rangeslider: { visible: false } },
+                yaxis: { gridcolor: '#30363d', linecolor: '#30363d' },
+                margin: { t: 20, r: 20, b: 40, l: 60 },
+                showlegend: true,
+                legend: { x: 0, y: 1, bgcolor: 'rgba(0,0,0,0)' },
+                height: 300
+            };
+            renderPriceChart(layout);
+        }
+
         async function step() {
             if (!sessionId) return;
 
@@ -764,13 +821,18 @@ def simulator_ui():
 
                 priceData.x.push(candle.datetime);
                 priceData.close.push(candle.close);
+                priceData.open.push(candle.open);
+                priceData.high.push(candle.high);
+                priceData.low.push(candle.low);
 
                 if (step.signal === 'BUY') {
                     buySignals.x.push(candle.datetime);
                     buySignals.y.push(candle.close);
+                    addEntryRow(candle.datetime, candle.close);
                 } else if (step.signal === 'SELL') {
                     sellSignals.x.push(candle.datetime);
                     sellSignals.y.push(candle.close);
+                    addExitRow(candle.datetime, candle.close);
                 }
 
                 indicatorData.x.push(candle.datetime);
@@ -782,10 +844,43 @@ def simulator_ui():
                 equityData.x.push(candle.datetime);
                 equityData.y.push(step.equity);
 
-                Plotly.update('priceChart', {
-                    x: [priceData.x, buySignals.x, sellSignals.x],
-                    y: [priceData.close, buySignals.y, sellSignals.y]
-                });
+                // Update price chart - purge and recreate for clean state
+                const priceLayout = {
+                    paper_bgcolor: '#161b22',
+                    plot_bgcolor: '#161b22',
+                    font: { color: '#c9d1d9' },
+                    xaxis: { 
+                        gridcolor: '#30363d', 
+                        linecolor: '#30363d',
+                        domain: [0, 1],
+                        rangeslider: { visible: false }
+                    },
+                    yaxis: { 
+                        gridcolor: '#30363d', 
+                        linecolor: '#30363d',
+                        domain: [0, 1]
+                    },
+                    margin: { t: 20, r: 20, b: 40, l: 60 },
+                    showlegend: true,
+                    legend: { x: 0, y: 1, bgcolor: 'rgba(0,0,0,0)' },
+                    height: 300
+                };
+                
+                Plotly.purge('priceChart');
+                
+                if (chartType === 'candlestick') {
+                    Plotly.newPlot('priceChart', [
+                        { x: priceData.x, open: priceData.open, high: priceData.high, low: priceData.low, close: priceData.close, type: 'candlestick', name: 'Price', increasing: {line: {color: '#3fb950'}}, decreasing: {line: {color: '#f85149'}}, xaxis: 'x', yaxis: 'y' },
+                        { x: buySignals.x, y: buySignals.y, type: 'scatter', mode: 'markers', name: 'Buy', marker: { color: '#3fb950', size: 12, symbol: 'triangle-up' }, xaxis: 'x', yaxis: 'y' },
+                        { x: sellSignals.x, y: sellSignals.y, type: 'scatter', mode: 'markers', name: 'Sell', marker: { color: '#f85149', size: 12, symbol: 'triangle-down' }, xaxis: 'x', yaxis: 'y' }
+                    ], priceLayout, {displayModeBar: false});
+                } else {
+                    Plotly.newPlot('priceChart', [
+                        { x: priceData.x, y: priceData.close, type: 'scatter', mode: 'lines', name: 'Price', line: { color: '#58a6ff' }, xaxis: 'x', yaxis: 'y' },
+                        { x: buySignals.x, y: buySignals.y, type: 'scatter', mode: 'markers', name: 'Buy', marker: { color: '#3fb950', size: 12, symbol: 'triangle-up' }, xaxis: 'x', yaxis: 'y' },
+                        { x: sellSignals.x, y: sellSignals.y, type: 'scatter', mode: 'markers', name: 'Sell', marker: { color: '#f85149', size: 12, symbol: 'triangle-down' }, xaxis: 'x', yaxis: 'y' }
+                    ], priceLayout, {displayModeBar: false});
+                }
 
                 if (strategyType === 'RSI' || strategyType === 'RSI+MACD') {
                     Plotly.update('indicatorChart', {
@@ -849,6 +944,56 @@ def simulator_ui():
         }
 
         let lastTradeCount = 0;
+        let tradeCounter = 0;
+        let currentTradeRowId = null;
+
+        function addEntryRow(entryTime, entryPrice) {
+            const tbody = document.getElementById('entryExitTable');
+            
+            // Clear placeholder if it exists
+            if (tbody.querySelector('tr td[colspan]')) {
+                tbody.innerHTML = '';
+            }
+            
+            tradeCounter++;
+            currentTradeRowId = `trade-${tradeCounter}`;
+            
+            const row = document.createElement('tr');
+            row.id = currentTradeRowId;
+            row.style.borderBottom = '1px solid #30363d';
+            row.innerHTML = `
+                <td style="padding: 8px; color: #c9d1d9;">${tradeCounter}</td>
+                <td style="padding: 8px; color: #58a6ff;">${entryTime}</td>
+                <td style="padding: 8px; color: #8b949e;">-</td>
+                <td style="padding: 8px; color: #3fb950;">₹${entryPrice.toFixed(2)}</td>
+                <td style="padding: 8px; color: #8b949e;">-</td>
+                <td style="padding: 8px; color: #c9d1d9;">1</td>
+                <td style="padding: 8px; color: #8b949e;">-</td>
+            `;
+            tbody.insertBefore(row, tbody.firstChild);
+        }
+
+        function addExitRow(exitTime, exitPrice) {
+            if (!currentTradeRowId) return;
+            
+            const row = document.getElementById(currentTradeRowId);
+            if (!row) return;
+            
+            // Update the row with exit data
+            const cells = row.querySelectorAll('td');
+            cells[2].textContent = exitTime;
+            cells[2].style.color = '#58a6ff';
+            cells[4].textContent = `₹${exitPrice.toFixed(2)}`;
+            cells[4].style.color = '#f85149';
+            
+            // Calculate P&L
+            const entryPrice = parseFloat(cells[3].textContent.replace('₹', ''));
+            const pnl = (exitPrice - entryPrice) * 1;
+            const pnlClass = pnl >= 0 ? '#3fb950' : '#f85149';
+            cells[6].textContent = `₹${pnl.toFixed(2)}`;
+            cells[6].style.color = pnlClass;
+        }
+
         function updateTradeLog(trade, totalTrades) {
             if (totalTrades <= lastTradeCount) return;
             lastTradeCount = totalTrades;
@@ -871,6 +1016,10 @@ def simulator_ui():
                 </div>
             `;
             log.insertBefore(entry, log.firstChild);
+        }
+
+        function updateEntryExitCard(trade) {
+            // Function no longer needed as we're using addEntryRow and addExitRow
         }
 
         function toggleAutoplay() {
