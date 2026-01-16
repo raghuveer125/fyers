@@ -1,0 +1,8 @@
+requests
+kafka-python
+python-dotenv
+fyers-apiv3
+websocket-client
+python-dotenv
+fyers-apiv3
+setuptools
