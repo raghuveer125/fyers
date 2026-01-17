@@ -303,6 +303,18 @@ def delete_simulator(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RSISweepRequest(BaseModel):
+    symbol: str = "BSE:RELIANCE-A"
+    timeframe: str = "1h"
+    period_start: int = 5
+    period_end: int = 25
+    overbought_start: float = 60.0
+    overbought_end: float = 80.0
+    oversold_start: float = 20.0
+    oversold_end: float = 40.0
+    initial_capital: float = 100000.0
+
+
 class MACDSweepRequest(BaseModel):
     symbol: str = "BSE:RELIANCE-A"
     timeframe: str = "1h"
@@ -313,6 +325,306 @@ class MACDSweepRequest(BaseModel):
     signal_start: int = 5
     signal_end: int = 12
     initial_capital: float = 100000.0
+
+
+class RSIMACDSweepRequest(BaseModel):
+    symbol: str = "BSE:RELIANCE-A"
+    timeframe: str = "1h"
+    rsi_period_start: int = 5
+    rsi_period_end: int = 25
+    rsi_overbought_start: float = 60.0
+    rsi_overbought_end: float = 80.0
+    rsi_oversold_start: float = 20.0
+    rsi_oversold_end: float = 40.0
+    macd_fast_start: int = 8
+    macd_fast_end: int = 24
+    macd_slow_start: int = 18
+    macd_slow_end: int = 52
+    macd_signal_start: int = 5
+    macd_signal_end: int = 12
+    initial_capital: float = 100000.0
+
+
+@app.post("/backtest/rsi-sweep")
+def backtest_rsi_sweep(request: RSISweepRequest):
+    try:
+        import csv
+        from .strategies import Candle
+        
+        results = []
+        candle_data = engine.get_candles(request.symbol, request.timeframe)
+        
+        if not candle_data:
+            raise ValueError(f"No candles found for {request.symbol} {request.timeframe}")
+        
+        candles = [
+            Candle(
+                timestamp=row["timestamp"],
+                datetime=str(row["datetime"]),
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+            )
+            for row in candle_data
+        ]
+        
+        total_combinations = (request.period_end - request.period_start + 1) * \
+                           (int(request.overbought_end * 2) - int(request.overbought_start * 2) + 1) * \
+                           (int(request.oversold_end * 2) - int(request.oversold_start * 2) + 1)
+        
+        for period in range(request.period_start, request.period_end + 1):
+            overbought = request.overbought_start
+            while overbought <= request.overbought_end:
+                oversold = request.oversold_start
+                while oversold <= request.oversold_end:
+                    config = RSIConfig(period=period, overbought=overbought, oversold=oversold)
+                    strategy = RSIStrategy(config=config, initial_capital=request.initial_capital)
+                    strategy.reset()
+                    
+                    for candle in candles:
+                        sig = strategy.on_candle(candle)
+                        strategy.process_signal(sig, candle, quantity=1)
+                    
+                    metrics = strategy.get_metrics()
+                    results.append({
+                        "period": period,
+                        "overbought": round(overbought, 1),
+                        "oversold": round(oversold, 1),
+                        **metrics,
+                    })
+                    
+                    oversold += 0.5
+                overbought += 0.5
+        
+        results.sort(key=lambda r: r["total_pnl"])
+        
+        csv_report_name = f"rsi_sweep_{request.symbol.replace(':', '_')}_{request.timeframe}.csv"
+        csv_report_path = os.path.join(REPORTS_DIR, csv_report_name)
+        
+        fieldnames = ["period", "overbought", "oversold", "total_pnl", "total_pnl_percent", "win_rate", 
+                     "total_trades", "winning_trades", "losing_trades", "avg_pnl", "max_drawdown", 
+                     "final_equity", "return_percent"]
+        
+        with open(csv_report_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        
+        html_report_name = f"rsi_sweep_{request.symbol.replace(':', '_')}_{request.timeframe}_report.html"
+        html_report_path = os.path.join(REPORTS_DIR, html_report_name)
+        
+        best_3 = results[-3:][::-1]
+        worst_3 = results[:3]
+        
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>RSI Parameter Sweep Report</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        h1, h2 {{ color: #58a6ff; }}
+        .metric {{ background: #161b22; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 3px solid #58a6ff; }}
+        .positive {{ color: #3fb950; }}
+        .negative {{ color: #f85149; }}
+        table {{ width: 100%; border-collapse: collapse; background: #161b22; margin: 20px 0; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }}
+        th {{ background: #21262d; color: #8b949e; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 RSI Parameter Sweep Report</h1>
+        <h2>{request.symbol} | {request.timeframe} | {len(results)} Combinations</h2>
+        
+        <div class="metric" style="border-left-color: #3fb950;">
+            <strong>🏆 Best Configuration</strong><br>
+            Period={best_3[0]['period']}, Overbought={best_3[0]['overbought']}, Oversold={best_3[0]['oversold']}<br>
+            <span class="positive">P&L: ₹{best_3[0]['total_pnl']:.2f}</span> | Win Rate: {best_3[0]['win_rate']:.1f}% | Trades: {best_3[0]['total_trades']}
+        </div>
+        
+        <h3>🏅 Top 10 Performers</h3>
+        <table>
+            <thead><tr><th>Period</th><th>OB</th><th>OS</th><th>P&L</th><th>Return %</th><th>Win Rate</th><th>Trades</th></tr></thead>
+            <tbody>
+"""
+        for row in best_3[:10]:
+            pnl_class = "positive" if row['total_pnl'] >= 0 else "negative"
+            html_content += f"<tr><td>{row['period']}</td><td>{row['overbought']}</td><td>{row['oversold']}</td><td class='{pnl_class}'>₹{row['total_pnl']:.2f}</td><td>{row.get('return_percent', 0):.2f}%</td><td>{row['win_rate']:.1f}%</td><td>{row['total_trades']}</td></tr>"
+        
+        html_content += """            </tbody>
+        </table>
+    </div>
+</body>
+</html>"""
+        
+        with open(html_report_path, 'w') as f:
+            f.write(html_content)
+        
+        return {
+            "status": "ok",
+            "total_combinations": len(results),
+            "csv_report": f"/report/{csv_report_name}",
+            "html_report": f"/report/{html_report_name}",
+            "best_3": best_3,
+            "worst_3": worst_3,
+            "all_results": results
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/backtest/rsi-macd-sweep")
+def backtest_rsi_macd_sweep(request: RSIMACDSweepRequest):
+    try:
+        import csv
+        from .strategies import Candle
+        
+        results = []
+        candle_data = engine.get_candles(request.symbol, request.timeframe)
+        
+        if not candle_data:
+            raise ValueError(f"No candles found for {request.symbol} {request.timeframe}")
+        
+        candles = [
+            Candle(
+                timestamp=row["timestamp"],
+                datetime=str(row["datetime"]),
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+            )
+            for row in candle_data
+        ]
+        
+        total_combos = 0
+        
+        for rsi_period in range(request.rsi_period_start, request.rsi_period_end + 1):
+            for macd_fast in range(request.macd_fast_start, request.macd_fast_end + 1):
+                for macd_slow in range(request.macd_slow_start, request.macd_slow_end + 1):
+                    for macd_signal in range(request.macd_signal_start, request.macd_signal_end + 1):
+                        config = RSIMACDBacktestRequest(
+                            symbol=request.symbol,
+                            timeframe=request.timeframe,
+                            rsi_period=rsi_period,
+                            rsi_overbought=request.rsi_overbought_start,
+                            rsi_oversold=request.rsi_oversold_start,
+                            macd_fast=macd_fast,
+                            macd_slow=macd_slow,
+                            macd_signal=macd_signal,
+                            initial_capital=request.initial_capital
+                        )
+                        
+                        from .strategies.rsi import RSIConfig
+                        from .strategies.macd import MACDConfig
+                        rsi_cfg = RSIConfig(period=rsi_period, overbought=request.rsi_overbought_start, oversold=request.rsi_oversold_start)
+                        macd_cfg = MACDConfig(fast_period=macd_fast, slow_period=macd_slow, signal_period=macd_signal)
+                        
+                        strategy = RSIMACDStrategy(
+                            rsi_config=rsi_cfg,
+                            macd_config=macd_cfg,
+                            initial_capital=request.initial_capital
+                        )
+                        strategy.reset()
+                        
+                        for candle in candles:
+                            sig = strategy.on_candle(candle)
+                            strategy.process_signal(sig, candle, quantity=1)
+                        
+                        metrics = strategy.get_metrics()
+                        results.append({
+                            "rsi_period": rsi_period,
+                            "macd_fast": macd_fast,
+                            "macd_slow": macd_slow,
+                            "macd_signal": macd_signal,
+                            **metrics,
+                        })
+                        total_combos += 1
+        
+        results.sort(key=lambda r: r["total_pnl"])
+        
+        csv_report_name = f"rsi_macd_sweep_{request.symbol.replace(':', '_')}_{request.timeframe}.csv"
+        csv_report_path = os.path.join(REPORTS_DIR, csv_report_name)
+        
+        fieldnames = ["rsi_period", "macd_fast", "macd_slow", "macd_signal", "total_pnl", "total_pnl_percent", 
+                     "win_rate", "total_trades", "winning_trades", "losing_trades", "avg_pnl", "max_drawdown", 
+                     "final_equity", "return_percent"]
+        
+        with open(csv_report_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        
+        html_report_name = f"rsi_macd_sweep_{request.symbol.replace(':', '_')}_{request.timeframe}_report.html"
+        html_report_path = os.path.join(REPORTS_DIR, html_report_name)
+        
+        best_3 = results[-3:][::-1]
+        worst_3 = results[:3]
+        
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>RSI+MACD Parameter Sweep Report</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        h1, h2 {{ color: #58a6ff; }}
+        .metric {{ background: #161b22; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 3px solid #58a6ff; }}
+        .positive {{ color: #3fb950; }}
+        .negative {{ color: #f85149; }}
+        table {{ width: 100%; border-collapse: collapse; background: #161b22; margin: 20px 0; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }}
+        th {{ background: #21262d; color: #8b949e; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 RSI+MACD Parameter Sweep Report</h1>
+        <h2>{request.symbol} | {request.timeframe} | {total_combos} Combinations</h2>
+        
+        <div class="metric" style="border-left-color: #3fb950;">
+            <strong>🏆 Best Configuration</strong><br>
+            RSI Period={best_3[0]['rsi_period']}, MACD Fast={best_3[0]['macd_fast']}, Slow={best_3[0]['macd_slow']}, Signal={best_3[0]['macd_signal']}<br>
+            <span class="positive">P&L: ₹{best_3[0]['total_pnl']:.2f}</span> | Win Rate: {best_3[0]['win_rate']:.1f}% | Trades: {best_3[0]['total_trades']}
+        </div>
+        
+        <h3>🏅 Top 10 Performers</h3>
+        <table>
+            <thead><tr><th>RSI</th><th>Fast</th><th>Slow</th><th>Signal</th><th>P&L</th><th>Win Rate</th><th>Trades</th></tr></thead>
+            <tbody>
+"""
+        for row in best_3[:10]:
+            pnl_class = "positive" if row['total_pnl'] >= 0 else "negative"
+            html_content += f"<tr><td>{row['rsi_period']}</td><td>{row['macd_fast']}</td><td>{row['macd_slow']}</td><td>{row['macd_signal']}</td><td class='{pnl_class}'>₹{row['total_pnl']:.2f}</td><td>{row['win_rate']:.1f}%</td><td>{row['total_trades']}</td></tr>"
+        
+        html_content += """            </tbody>
+        </table>
+    </div>
+</body>
+</html>"""
+        
+        with open(html_report_path, 'w') as f:
+            f.write(html_content)
+        
+        return {
+            "status": "ok",
+            "total_combinations": total_combos,
+            "csv_report": f"/report/{csv_report_name}",
+            "html_report": f"/report/{html_report_name}",
+            "best_3": best_3,
+            "worst_3": worst_3,
+            "all_results": results
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/backtest/macd-sweep")
@@ -885,7 +1197,7 @@ def simulator_ui():
 
         <div id="sweepTab" style="display:none;">
             <div style="padding: 20px; background: #0d1117; min-height: 600px;">
-                <h2 style="color: #58a6ff; margin-bottom: 20px;">⚙️ MACD Parameter Sweep</h2>
+                <h2 style="color: #58a6ff; margin-bottom: 20px;">⚙️ Parameter Sweep</h2>
                 
                 <div class="controls" style="margin-bottom: 20px;">
                     <div class="control-group">
@@ -905,27 +1217,91 @@ def simulator_ui():
                             <option value="1D">1 Day</option>
                         </select>
                     </div>
+                    <div class="control-group">
+                        <label>Strategy</label>
+                        <select id="sweepStrategy" onchange="toggleSweepStrategyParams()">
+                            <option value="RSI">RSI</option>
+                            <option value="MACD" selected>MACD</option>
+                            <option value="RSI+MACD">RSI + MACD</option>
+                        </select>
+                    </div>
                 </div>
 
-                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-                    <h3 style="color: #8b949e; margin-bottom: 15px;">⚡ Fast Period Range</h3>
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-                        <div class="control-group">
-                            <label>Start</label>
-                            <input type="number" id="fastStart" value="8" min="2" max="50" oninput="updateCombinations()">
+                <!-- RSI Parameters -->
+                <div id="rsiSweepParams" style="display:none;">
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📊 RSI Period Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="rsiPeriodStart" value="5" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="rsiPeriodEnd" value="25" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="rsiPeriodRange" style="color: #58a6ff;">21</strong> values
+                            </div>
                         </div>
-                        <div class="control-group">
-                            <label>End</label>
-                            <input type="number" id="fastEnd" value="24" min="2" max="50" oninput="updateCombinations()">
+                    </div>
+
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📈 Overbought Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="rsiOBStart" value="60" min="50" max="90" step="0.5" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="rsiOBEnd" value="80" min="50" max="90" step="0.5" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="rsiOBRange" style="color: #58a6ff;">41</strong> values
+                            </div>
                         </div>
-                        <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
-                            Range: <strong id="fastRange" style="color: #58a6ff;">17</strong> values
+                    </div>
+
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📉 Oversold Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="rsiOSStart" value="20" min="10" max="50" step="0.5" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="rsiOSEnd" value="40" min="10" max="50" step="0.5" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="rsiOSRange" style="color: #58a6ff;">41</strong> values
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-                    <h3 style="color: #8b949e; margin-bottom: 15px;">📈 Slow Period Range</h3>
+                <!-- MACD Parameters -->
+                <div id="macdSweepParams">
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">⚡ Fast Period Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="fastStart" value="8" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="fastEnd" value="24" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="fastRange" style="color: #58a6ff;">17</strong> values
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📈 Slow Period Range</h3>
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
                         <div class="control-group">
                             <label>Start</label>
@@ -954,6 +1330,78 @@ def simulator_ui():
                         </div>
                         <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
                             Range: <strong id="signalRange" style="color: #58a6ff;">8</strong> values
+                        </div>
+                    </div>
+                </div>
+                </div>
+
+                <!-- RSI+MACD Parameters -->
+                <div id="rsiMacdSweepParams" style="display:none;">
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📊 RSI Period Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="rsiMacdPeriodStart" value="5" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="rsiMacdPeriodEnd" value="25" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="rsiMacdPeriodRange" style="color: #58a6ff;">21</strong> values
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">⚡ MACD Fast Period Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="macdFastStart" value="8" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="macdFastEnd" value="24" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="macdFastRange" style="color: #58a6ff;">17</strong> values
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📈 MACD Slow Period Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="macdSlowStart" value="18" min="2" max="100" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="macdSlowEnd" value="52" min="2" max="100" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="macdSlowRange" style="color: #58a6ff;">35</strong> values
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 15px;">📊 MACD Signal Period Range</h3>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                            <div class="control-group">
+                                <label>Start</label>
+                                <input type="number" id="macdSignalStart" value="5" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div class="control-group">
+                                <label>End</label>
+                                <input type="number" id="macdSignalEnd" value="12" min="2" max="50" oninput="updateCombinations()">
+                            </div>
+                            <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                                Range: <strong id="macdSignalRange" style="color: #58a6ff;">8</strong> values
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1481,49 +1929,125 @@ def simulator_ui():
             event.target.classList.add('active');
         }
 
-        function updateCombinations() {
-            const fast = Math.abs(parseInt(document.getElementById('fastEnd').value) - parseInt(document.getElementById('fastStart').value)) + 1;
-            const slow = Math.abs(parseInt(document.getElementById('slowEnd').value) - parseInt(document.getElementById('slowStart').value)) + 1;
-            const signal = Math.abs(parseInt(document.getElementById('signalEnd').value) - parseInt(document.getElementById('signalStart').value)) + 1;
+        function toggleSweepStrategyParams() {
+            const strategy = document.getElementById('sweepStrategy').value;
+            const rsiParams = document.getElementById('rsiSweepParams');
+            const macdParams = document.getElementById('macdSweepParams');
+            const rsiMacdParams = document.getElementById('rsiMacdSweepParams');
             
-            document.getElementById('fastRange').textContent = fast;
-            document.getElementById('slowRange').textContent = slow;
-            document.getElementById('signalRange').textContent = signal;
-            document.getElementById('totalCombinations').textContent = (fast * slow * signal).toLocaleString();
+            rsiParams.style.display = 'none';
+            macdParams.style.display = 'none';
+            rsiMacdParams.style.display = 'none';
+            
+            if (strategy === 'RSI') {
+                rsiParams.style.display = 'block';
+            } else if (strategy === 'MACD') {
+                macdParams.style.display = 'block';
+            } else if (strategy === 'RSI+MACD') {
+                rsiMacdParams.style.display = 'block';
+            }
+            updateCombinations();
+        }
+
+        function updateCombinations() {
+            const strategy = document.getElementById('sweepStrategy').value;
+            let totalCombos = 1;
+            
+            if (strategy === 'RSI') {
+                const period = Math.abs(parseInt(document.getElementById('rsiPeriodEnd').value) - parseInt(document.getElementById('rsiPeriodStart').value)) + 1;
+                const ob = Math.abs(parseInt(document.getElementById('rsiOBEnd').value * 2) - parseInt(document.getElementById('rsiOBStart').value * 2)) + 1;
+                const os = Math.abs(parseInt(document.getElementById('rsiOSEnd').value * 2) - parseInt(document.getElementById('rsiOSStart').value * 2)) + 1;
+                
+                document.getElementById('rsiPeriodRange').textContent = period;
+                document.getElementById('rsiOBRange').textContent = ob;
+                document.getElementById('rsiOSRange').textContent = os;
+                totalCombos = period * ob * os;
+            } else if (strategy === 'MACD') {
+                const fast = Math.abs(parseInt(document.getElementById('fastEnd').value) - parseInt(document.getElementById('fastStart').value)) + 1;
+                const slow = Math.abs(parseInt(document.getElementById('slowEnd').value) - parseInt(document.getElementById('slowStart').value)) + 1;
+                const signal = Math.abs(parseInt(document.getElementById('signalEnd').value) - parseInt(document.getElementById('signalStart').value)) + 1;
+                
+                document.getElementById('fastRange').textContent = fast;
+                document.getElementById('slowRange').textContent = slow;
+                document.getElementById('signalRange').textContent = signal;
+                totalCombos = fast * slow * signal;
+            } else if (strategy === 'RSI+MACD') {
+                const rsiPeriod = Math.abs(parseInt(document.getElementById('rsiMacdPeriodEnd').value) - parseInt(document.getElementById('rsiMacdPeriodStart').value)) + 1;
+                const macdFast = Math.abs(parseInt(document.getElementById('macdFastEnd').value) - parseInt(document.getElementById('macdFastStart').value)) + 1;
+                const macdSlow = Math.abs(parseInt(document.getElementById('macdSlowEnd').value) - parseInt(document.getElementById('macdSlowStart').value)) + 1;
+                const macdSignal = Math.abs(parseInt(document.getElementById('macdSignalEnd').value) - parseInt(document.getElementById('macdSignalStart').value)) + 1;
+                
+                document.getElementById('rsiMacdPeriodRange').textContent = rsiPeriod;
+                document.getElementById('macdFastRange').textContent = macdFast;
+                document.getElementById('macdSlowRange').textContent = macdSlow;
+                document.getElementById('macdSignalRange').textContent = macdSignal;
+                totalCombos = rsiPeriod * macdFast * macdSlow * macdSignal;
+            }
+            
+            document.getElementById('totalCombinations').textContent = totalCombos.toLocaleString();
         }
 
         async function runSweep() {
             const symbol = document.getElementById('sweepSymbol').value;
             const timeframe = document.getElementById('sweepTimeframe').value;
-            const fastStart = parseInt(document.getElementById('fastStart').value);
-            const fastEnd = parseInt(document.getElementById('fastEnd').value);
-            const slowStart = parseInt(document.getElementById('slowStart').value);
-            const slowEnd = parseInt(document.getElementById('slowEnd').value);
-            const signalStart = parseInt(document.getElementById('signalStart').value);
-            const signalEnd = parseInt(document.getElementById('signalEnd').value);
+            const strategy = document.getElementById('sweepStrategy').value;
             const capital = parseFloat(document.getElementById('sweepCapital').value);
 
             document.getElementById('runSweepBtn').disabled = true;
             document.getElementById('sweepProgress').style.display = 'block';
             document.getElementById('sweepResults').style.display = 'none';
-            document.getElementById('sweepStatus').textContent = 'Running sweep... This may take 30-60 seconds.';
+            document.getElementById('sweepStatus').textContent = 'Running sweep... This may take 30-120 seconds.';
             document.getElementById('sweepProgressBar').style.width = '50%';
 
+            let endpoint = '';
+            let body = { symbol, timeframe, initial_capital: capital };
+
             try {
-                const res = await fetch('/backtest/macd-sweep', {
+                if (strategy === 'RSI') {
+                    endpoint = '/backtest/rsi-sweep';
+                    body = {
+                        ...body,
+                        period_start: parseInt(document.getElementById('rsiPeriodStart').value),
+                        period_end: parseInt(document.getElementById('rsiPeriodEnd').value),
+                        overbought_start: parseFloat(document.getElementById('rsiOBStart').value),
+                        overbought_end: parseFloat(document.getElementById('rsiOBEnd').value),
+                        oversold_start: parseFloat(document.getElementById('rsiOSStart').value),
+                        oversold_end: parseFloat(document.getElementById('rsiOSEnd').value)
+                    };
+                } else if (strategy === 'MACD') {
+                    endpoint = '/backtest/macd-sweep';
+                    body = {
+                        ...body,
+                        fast_start: parseInt(document.getElementById('fastStart').value),
+                        fast_end: parseInt(document.getElementById('fastEnd').value),
+                        slow_start: parseInt(document.getElementById('slowStart').value),
+                        slow_end: parseInt(document.getElementById('slowEnd').value),
+                        signal_start: parseInt(document.getElementById('signalStart').value),
+                        signal_end: parseInt(document.getElementById('signalEnd').value)
+                    };
+                } else if (strategy === 'RSI+MACD') {
+                    endpoint = '/backtest/rsi-macd-sweep';
+                    body = {
+                        ...body,
+                        rsi_period_start: parseInt(document.getElementById('rsiMacdPeriodStart').value),
+                        rsi_period_end: parseInt(document.getElementById('rsiMacdPeriodEnd').value),
+                        rsi_overbought_start: parseFloat(document.getElementById('rsiOBStart').value),
+                        rsi_overbought_end: parseFloat(document.getElementById('rsiOBEnd').value),
+                        rsi_oversold_start: parseFloat(document.getElementById('rsiOSStart').value),
+                        rsi_oversold_end: parseFloat(document.getElementById('rsiOSEnd').value),
+                        macd_fast_start: parseInt(document.getElementById('macdFastStart').value),
+                        macd_fast_end: parseInt(document.getElementById('macdFastEnd').value),
+                        macd_slow_start: parseInt(document.getElementById('macdSlowStart').value),
+                        macd_slow_end: parseInt(document.getElementById('macdSlowEnd').value),
+                        macd_signal_start: parseInt(document.getElementById('macdSignalStart').value),
+                        macd_signal_end: parseInt(document.getElementById('macdSignalEnd').value)
+                    };
+                }
+
+                const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        symbol: symbol,
-                        timeframe: timeframe,
-                        fast_start: fastStart,
-                        fast_end: fastEnd,
-                        slow_start: slowStart,
-                        slow_end: slowEnd,
-                        signal_start: signalStart,
-                        signal_end: signalEnd,
-                        initial_capital: capital
-                    })
+                    body: JSON.stringify(body)
                 });
 
                 const data = await res.json();
