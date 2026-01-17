@@ -303,6 +303,225 @@ def delete_simulator(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class MACDSweepRequest(BaseModel):
+    symbol: str = "BSE:RELIANCE-A"
+    timeframe: str = "1h"
+    fast_start: int = 8
+    fast_end: int = 24
+    slow_start: int = 18
+    slow_end: int = 52
+    signal_start: int = 5
+    signal_end: int = 12
+    initial_capital: float = 100000.0
+
+
+@app.post("/backtest/macd-sweep")
+def backtest_macd_sweep(request: MACDSweepRequest):
+    try:
+        import csv
+        from .strategies import Candle
+        
+        results = []
+        candle_data = engine.get_candles(request.symbol, request.timeframe)
+        
+        if not candle_data:
+            raise ValueError(f"No candles found for {request.symbol} {request.timeframe}")
+        
+        candles = [
+            Candle(
+                timestamp=row["timestamp"],
+                datetime=str(row["datetime"]),
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"],
+            )
+            for row in candle_data
+        ]
+        
+        total_combinations = (request.fast_end - request.fast_start + 1) * \
+                           (request.slow_end - request.slow_start + 1) * \
+                           (request.signal_end - request.signal_start + 1)
+        
+        processed = 0
+        
+        for fast in range(request.fast_start, request.fast_end + 1):
+            for slow in range(request.slow_start, request.slow_end + 1):
+                for signal in range(request.signal_start, request.signal_end + 1):
+                    config = MACDConfig(fast_period=fast, slow_period=slow, signal_period=signal)
+                    strategy = MACDStrategy(config=config, initial_capital=request.initial_capital)
+                    strategy.reset()
+                    
+                    for candle in candles:
+                        sig = strategy.on_candle(candle)
+                        strategy.process_signal(sig, candle, quantity=1)
+                    
+                    metrics = strategy.get_metrics()
+                    results.append({
+                        "fast_period": fast,
+                        "slow_period": slow,
+                        "signal_period": signal,
+                        **metrics,
+                    })
+                    
+                    processed += 1
+        
+        # Sort by total_pnl ascending
+        results.sort(key=lambda r: r["total_pnl"])
+        
+        # Save CSV
+        csv_report_name = f"macd_sweep_{request.symbol.replace(':', '_')}_{request.timeframe}.csv"
+        csv_report_path = os.path.join(REPORTS_DIR, csv_report_name)
+        
+        fieldnames = [
+            "fast_period", "slow_period", "signal_period",
+            "total_pnl", "total_pnl_percent", "win_rate", "total_trades",
+            "winning_trades", "losing_trades", "avg_pnl", "max_drawdown",
+            "final_equity", "return_percent"
+        ]
+        
+        with open(csv_report_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        
+        # Generate consolidated HTML report
+        html_report_name = f"macd_sweep_{request.symbol.replace(':', '_')}_{request.timeframe}_report.html"
+        html_report_path = os.path.join(REPORTS_DIR, html_report_name)
+        
+        best_3 = results[-3:][::-1]
+        worst_3 = results[:3]
+        
+        html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>MACD Parameter Sweep Report</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        h1, h2 {{ color: #58a6ff; }}
+        .metric {{ background: #161b22; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 3px solid #58a6ff; }}
+        .positive {{ color: #3fb950; }}
+        .negative {{ color: #f85149; }}
+        table {{ width: 100%; border-collapse: collapse; background: #161b22; margin: 20px 0; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #30363d; }}
+        th {{ background: #21262d; color: #8b949e; }}
+        .best {{ background: #161b22; border-left: 3px solid #3fb950; }}
+        .worst {{ background: #161b22; border-left: 3px solid #f85149; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 MACD Parameter Sweep Report</h1>
+        <h2>{request.symbol} | {request.timeframe} | {len(results)} Combinations</h2>
+        
+        <div class="metric best">
+            <strong>🏆 Best Configuration</strong><br>
+            Fast={best_3[0]['fast_period']}, Slow={best_3[0]['slow_period']}, Signal={best_3[0]['signal_period']}<br>
+            <span class="positive">P&L: ₹{best_3[0]['total_pnl']:.2f}</span> | Win Rate: {best_3[0]['win_rate']:.1f}% | Trades: {best_3[0]['total_trades']}
+        </div>
+        
+        <div class="metric worst">
+            <strong>📉 Worst Configuration</strong><br>
+            Fast={worst_3[0]['fast_period']}, Slow={worst_3[0]['slow_period']}, Signal={worst_3[0]['signal_period']}<br>
+            <span class="negative">P&L: ₹{worst_3[0]['total_pnl']:.2f}</span> | Win Rate: {worst_3[0]['win_rate']:.1f}% | Trades: {worst_3[0]['total_trades']}
+        </div>
+        
+        <h3>🏅 Top 10 Performers</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Fast</th>
+                    <th>Slow</th>
+                    <th>Signal</th>
+                    <th>P&L</th>
+                    <th>Return %</th>
+                    <th>Win Rate</th>
+                    <th>Trades</th>
+                    <th>Max DD</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        
+        for i, row in enumerate(best_3[:10]):
+            pnl_class = "positive" if row['total_pnl'] >= 0 else "negative"
+            html_content += f"""                <tr>
+                    <td>{row['fast_period']}</td>
+                    <td>{row['slow_period']}</td>
+                    <td>{row['signal_period']}</td>
+                    <td class="{pnl_class}">₹{row['total_pnl']:.2f}</td>
+                    <td>{row.get('return_percent', 0):.2f}%</td>
+                    <td>{row['win_rate']:.1f}%</td>
+                    <td>{row['total_trades']}</td>
+                    <td>{row.get('max_drawdown', 0):.2f}</td>
+                </tr>
+"""
+        
+        html_content += """            </tbody>
+        </table>
+        
+        <h3>📉 Bottom 10 Performers</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Fast</th>
+                    <th>Slow</th>
+                    <th>Signal</th>
+                    <th>P&L</th>
+                    <th>Return %</th>
+                    <th>Win Rate</th>
+                    <th>Trades</th>
+                    <th>Max DD</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        
+        for row in worst_3[:10]:
+            pnl_class = "positive" if row['total_pnl'] >= 0 else "negative"
+            html_content += f"""                <tr>
+                    <td>{row['fast_period']}</td>
+                    <td>{row['slow_period']}</td>
+                    <td>{row['signal_period']}</td>
+                    <td class="{pnl_class}">₹{row['total_pnl']:.2f}</td>
+                    <td>{row.get('return_percent', 0):.2f}%</td>
+                    <td>{row['win_rate']:.1f}%</td>
+                    <td>{row['total_trades']}</td>
+                    <td>{row.get('max_drawdown', 0):.2f}</td>
+                </tr>
+"""
+        
+        html_content += """            </tbody>
+        </table>
+        
+        <p style="color: #8b949e; margin-top: 30px; font-size: 12px;">
+            Report generated on 17 January 2026 | Total Combinations: """ + str(total_combinations) + """ | Data: """ + request.symbol + """ """ + request.timeframe + """
+        </p>
+    </div>
+</body>
+</html>"""
+        
+        with open(html_report_path, 'w') as f:
+            f.write(html_content)
+        
+        return {
+            "status": "ok",
+            "total_combinations": total_combinations,
+            "csv_report": f"/report/{csv_report_name}",
+            "html_report": f"/report/{html_report_name}",
+            "best_3": best_3,
+            "worst_3": worst_3,
+            "all_results": results
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/simulator-ui")
 def simulator_ui():
     html = """
@@ -478,8 +697,14 @@ def simulator_ui():
 </head>
 <body>
     <div class="container">
-        <h1>Live Market Simulator</h1>
+        <h1>📊 Backtesting Studio</h1>
 
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="switchTab('simulator')">🎬 Live Simulator</button>
+            <button class="tab-btn" onclick="switchTab('sweep')">📊 Parameter Sweep</button>
+        </div>
+
+        <div id="simulatorTab">
         <div class="controls">
             <div class="control-group">
                 <label>Symbol</label>
@@ -656,7 +881,176 @@ def simulator_ui():
                 <button class="btn btn-secondary" onclick="resetSession()">Reset</button>
             </div>
         </div>
+        </div>
+
+        <div id="sweepTab" style="display:none;">
+            <div style="padding: 20px; background: #0d1117; min-height: 600px;">
+                <h2 style="color: #58a6ff; margin-bottom: 20px;">⚙️ MACD Parameter Sweep</h2>
+                
+                <div class="controls" style="margin-bottom: 20px;">
+                    <div class="control-group">
+                        <label>Symbol</label>
+                        <select id="sweepSymbol">
+                            <option value="BSE:RELIANCE-A">BSE:RELIANCE-A</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label>Timeframe</label>
+                        <select id="sweepTimeframe">
+                            <option value="1m">1 Minute</option>
+                            <option value="5m">5 Minutes</option>
+                            <option value="15m">15 Minutes</option>
+                            <option value="30m">30 Minutes</option>
+                            <option value="1h" selected>1 Hour</option>
+                            <option value="1D">1 Day</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                    <h3 style="color: #8b949e; margin-bottom: 15px;">⚡ Fast Period Range</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div class="control-group">
+                            <label>Start</label>
+                            <input type="number" id="fastStart" value="8" min="2" max="50" oninput="updateCombinations()">
+                        </div>
+                        <div class="control-group">
+                            <label>End</label>
+                            <input type="number" id="fastEnd" value="24" min="2" max="50" oninput="updateCombinations()">
+                        </div>
+                        <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                            Range: <strong id="fastRange" style="color: #58a6ff;">17</strong> values
+                        </div>
+                    </div>
+                </div>
+
+                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                    <h3 style="color: #8b949e; margin-bottom: 15px;">📈 Slow Period Range</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div class="control-group">
+                            <label>Start</label>
+                            <input type="number" id="slowStart" value="18" min="2" max="100" oninput="updateCombinations()">
+                        </div>
+                        <div class="control-group">
+                            <label>End</label>
+                            <input type="number" id="slowEnd" value="52" min="2" max="100" oninput="updateCombinations()">
+                        </div>
+                        <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                            Range: <strong id="slowRange" style="color: #58a6ff;">35</strong> values
+                        </div>
+                    </div>
+                </div>
+
+                <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                    <h3 style="color: #8b949e; margin-bottom: 15px;">📊 Signal Period Range</h3>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div class="control-group">
+                            <label>Start</label>
+                            <input type="number" id="signalStart" value="5" min="2" max="50" oninput="updateCombinations()">
+                        </div>
+                        <div class="control-group">
+                            <label>End</label>
+                            <input type="number" id="signalEnd" value="12" min="2" max="50" oninput="updateCombinations()">
+                        </div>
+                        <div style="padding-top: 23px; color: #8b949e; font-size: 12px;">
+                            Range: <strong id="signalRange" style="color: #58a6ff;">8</strong> values
+                        </div>
+                    </div>
+                </div>
+
+                <div style="background: #21262d; border-left: 4px solid #58a6ff; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                    <strong style="color: #c9d1d9;">Total Combinations:</strong> <span id="totalCombinations" style="color: #58a6ff; font-size: 18px; font-weight: 600;">4,760</span>
+                </div>
+
+                <div class="control-group" style="max-width: 200px; margin-bottom: 20px;">
+                    <label>Initial Capital</label>
+                    <input type="number" id="sweepCapital" value="100000" min="1000">
+                </div>
+
+                <button class="btn btn-primary btn-large" id="runSweepBtn" onclick="runSweep()" style="width: 100%; max-width: 100%; padding: 15px 40px;">
+                    🚀 Run Parameter Sweep
+                </button>
+
+                <div id="sweepProgress" style="display:none; margin-top: 20px;">
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
+                        <h3 style="color: #8b949e; margin-bottom: 10px;">Running Sweep...</h3>
+                        <div class="progress-bar" style="height: 6px;">
+                            <div class="progress-fill" id="sweepProgressBar" style="width: 0%;"></div>
+                        </div>
+                        <div style="margin-top: 10px; color: #8b949e; font-size: 12px;">
+                            <span id="sweepStatus">Initializing...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sweepResults" style="display:none; margin-top: 20px;">
+                    <div style="background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px;">
+                        <h3 style="color: #58a6ff; margin-bottom: 15px;">✅ Sweep Complete!</h3>
+
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px;">
+                            <div style="background: #0d1117; padding: 15px; border-radius: 6px; border-left: 3px solid #3fb950;">
+                                <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Best P&L</div>
+                                <div style="font-size: 20px; font-weight: 600; color: #3fb950; margin-top: 5px;" id="bestPnL">+₹53.70</div>
+                                <div style="color: #8b949e; font-size: 11px; margin-top: 5px;" id="bestConfig">Fast=23, Slow=19, Signal=5</div>
+                            </div>
+                            <div style="background: #0d1117; padding: 15px; border-radius: 6px; border-left: 3px solid #f85149;">
+                                <div style="color: #8b949e; font-size: 12px; text-transform: uppercase;">Worst P&L</div>
+                                <div style="font-size: 20px; font-weight: 600; color: #f85149; margin-top: 5px;" id="worstPnL">-₹196.90</div>
+                                <div style="color: #8b949e; font-size: 11px; margin-top: 5px;" id="worstConfig">Fast=8, Slow=18, Signal=5</div>
+                            </div>
+                        </div>
+
+                        <h4 style="color: #8b949e; margin-bottom: 10px;">🏆 Top 5 Performers</h4>
+                        <table id="topPerformersTable" style="width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 20px;">
+                            <thead>
+                                <tr style="background: #21262d;">
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Fast</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Slow</th>
+                                    <th style="padding: 8px; text-align: left; border-bottom: 1px solid #30363d; color: #8b949e;">Signal</th>
+                                    <th style="padding: 8px; text-align: right; border-bottom: 1px solid #30363d; color: #8b949e;">P&L</th>
+                                    <th style="padding: 8px; text-align: right; border-bottom: 1px solid #30363d; color: #8b949e;">Win Rate</th>
+                                    <th style="padding: 8px; text-align: right; border-bottom: 1px solid #30363d; color: #8b949e;">Trades</th>
+                                </tr>
+                            </thead>
+                            <tbody id="topPerformersBody"></tbody>
+                        </table>
+
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <a id="htmlReportLink" href="fyers/backtesting/reports/macd_sweep_consolidated_report.html" target="_blank" class="btn btn-secondary">📈 View Detailed Report</a>
+                            <button class="btn btn-secondary" onclick="newSweep()">🔄 New Sweep</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
+
+    <style>
+        .tab-buttons {
+            display: flex;
+            gap: 0;
+            margin-bottom: 0;
+            border-bottom: 2px solid #30363d;
+            padding: 0;
+        }
+        .tab-btn {
+            padding: 12px 24px;
+            border: none;
+            background: transparent;
+            color: #8b949e;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+            margin: 0;
+        }
+        .tab-btn.active {
+            color: #58a6ff;
+            border-bottom-color: #58a6ff;
+        }
+        .tab-btn:hover { color: #c9d1d9; }
+    </style>
 
     <script>
         let sessionId = null;
@@ -1074,6 +1468,119 @@ def simulator_ui():
             } catch (e) {
                 alert('Error resetting session: ' + e.message);
             }
+        }
+
+        // ===== PARAMETER SWEEP TAB FUNCTIONS =====
+        
+        function switchTab(tab) {
+            document.getElementById('simulatorTab').style.display = tab === 'simulator' ? 'block' : 'none';
+            document.getElementById('sweepTab').style.display = tab === 'sweep' ? 'block' : 'none';
+            
+            const btns = document.querySelectorAll('.tab-btn');
+            btns.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        function updateCombinations() {
+            const fast = Math.abs(parseInt(document.getElementById('fastEnd').value) - parseInt(document.getElementById('fastStart').value)) + 1;
+            const slow = Math.abs(parseInt(document.getElementById('slowEnd').value) - parseInt(document.getElementById('slowStart').value)) + 1;
+            const signal = Math.abs(parseInt(document.getElementById('signalEnd').value) - parseInt(document.getElementById('signalStart').value)) + 1;
+            
+            document.getElementById('fastRange').textContent = fast;
+            document.getElementById('slowRange').textContent = slow;
+            document.getElementById('signalRange').textContent = signal;
+            document.getElementById('totalCombinations').textContent = (fast * slow * signal).toLocaleString();
+        }
+
+        async function runSweep() {
+            const symbol = document.getElementById('sweepSymbol').value;
+            const timeframe = document.getElementById('sweepTimeframe').value;
+            const fastStart = parseInt(document.getElementById('fastStart').value);
+            const fastEnd = parseInt(document.getElementById('fastEnd').value);
+            const slowStart = parseInt(document.getElementById('slowStart').value);
+            const slowEnd = parseInt(document.getElementById('slowEnd').value);
+            const signalStart = parseInt(document.getElementById('signalStart').value);
+            const signalEnd = parseInt(document.getElementById('signalEnd').value);
+            const capital = parseFloat(document.getElementById('sweepCapital').value);
+
+            document.getElementById('runSweepBtn').disabled = true;
+            document.getElementById('sweepProgress').style.display = 'block';
+            document.getElementById('sweepResults').style.display = 'none';
+            document.getElementById('sweepStatus').textContent = 'Running sweep... This may take 30-60 seconds.';
+            document.getElementById('sweepProgressBar').style.width = '50%';
+
+            try {
+                const res = await fetch('/backtest/macd-sweep', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol: symbol,
+                        timeframe: timeframe,
+                        fast_start: fastStart,
+                        fast_end: fastEnd,
+                        slow_start: slowStart,
+                        slow_end: slowEnd,
+                        signal_start: signalStart,
+                        signal_end: signalEnd,
+                        initial_capital: capital
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.status === 'ok') {
+                    document.getElementById('sweepStatus').textContent = '✅ Sweep complete! Displaying results...';
+                    document.getElementById('sweepProgressBar').style.width = '100%';
+
+                    // Display results
+                    const best = data.best_3[0];
+                    const worst = data.worst_3[0];
+
+                    document.getElementById('bestPnL').textContent = '₹' + best.total_pnl.toFixed(2);
+                    document.getElementById('bestConfig').textContent = `Fast=${best.fast_period}, Slow=${best.slow_period}, Signal=${best.signal_period} (${best.win_rate.toFixed(1)}% WR)`;
+                    
+                    document.getElementById('worstPnL').textContent = '₹' + worst.total_pnl.toFixed(2);
+                    document.getElementById('worstConfig').textContent = `Fast=${worst.fast_period}, Slow=${worst.slow_period}, Signal=${worst.signal_period} (${worst.win_rate.toFixed(1)}% WR)`;
+
+                    // Populate top performers table
+                    const tbody = document.getElementById('topPerformersBody');
+                    tbody.innerHTML = '';
+                    for (let i = 0; i < Math.min(5, data.best_3.length); i++) {
+                        const row = data.best_3[i];
+                        const pnlClass = row.total_pnl >= 0 ? 'color: #3fb950;' : 'color: #f85149;';
+                        tbody.innerHTML += `
+                            <tr style="border-bottom: 1px solid #30363d;">
+                                <td style="padding: 8px;">${row.fast_period}</td>
+                                <td style="padding: 8px;">${row.slow_period}</td>
+                                <td style="padding: 8px;">${row.signal_period}</td>
+                                <td style="padding: 8px; text-align: right; ${pnlClass}">₹${row.total_pnl.toFixed(2)}</td>
+                                <td style="padding: 8px; text-align: right;">${row.win_rate.toFixed(1)}%</td>
+                                <td style="padding: 8px; text-align: right;">${row.total_trades}</td>
+                            </tr>
+                        `;
+                    }
+
+                    // Set report link
+                    document.getElementById('htmlReportLink').href = data.html_report;
+
+                    setTimeout(() => {
+                        document.getElementById('sweepProgress').style.display = 'none';
+                        document.getElementById('sweepResults').style.display = 'block';
+                    }, 500);
+                } else {
+                    alert('Error: ' + data.detail);
+                }
+            } catch (e) {
+                alert('Sweep error: ' + e.message);
+            } finally {
+                document.getElementById('runSweepBtn').disabled = false;
+            }
+        }
+
+        function newSweep() {
+            document.getElementById('sweepProgress').style.display = 'none';
+            document.getElementById('sweepResults').style.display = 'none';
+            document.getElementById('runSweepBtn').disabled = false;
         }
     </script>
 </body>

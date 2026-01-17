@@ -47,35 +47,28 @@ class RSI:
         self.prev_close = None
         self.value = None
 
+
 class RSIStrategy(Strategy):
     def __init__(self, config: RSIConfig = None, initial_capital: float = 100000.0):
         super().__init__(initial_capital)
         self.config = config or RSIConfig()
         self.rsi = RSI(self.config)
-        self.prev_rsi: Optional[float] = None
 
     def on_candle(self, candle: Candle) -> Signal:
-        rsi = self.rsi.update(candle.close)
+        rsi_value = self.rsi.update(candle.close)
 
-        if rsi is None:
+        if rsi_value is None:
             return Signal.HOLD
 
-        if self.prev_rsi is None:
-            self.prev_rsi = rsi
-            return Signal.HOLD
-
-        # ✅ BUY only if RSI was BELOW oversold and crosses UP
-        if (
-            self.prev_rsi < self.config.oversold
-            and rsi >= self.config.oversold
-            and self.state.position == 0
-        ):
-            self.prev_rsi = rsi
+        # BUY when RSI crosses below oversold level
+        if rsi_value < self.config.oversold and self.state.position == 0:
             return Signal.BUY
 
-        self.prev_rsi = rsi
-        return Signal.HOLD
+        # SELL when RSI crosses above overbought level
+        elif rsi_value > self.config.overbought and self.state.position == 1:
+            return Signal.SELL
 
+        return Signal.HOLD
 
     def reset(self):
         self.rsi.reset()

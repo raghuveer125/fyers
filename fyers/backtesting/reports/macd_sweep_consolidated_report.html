@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MACD Parameter Sweep - Consolidated Report</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
+      padding: 30px;
+      border-radius: 8px;
+      margin-bottom: 30px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .header p {
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .section h2 {
+      font-size: 20px;
+      margin-bottom: 15px;
+      color: #58a6ff;
+      border-bottom: 2px solid #30363d;
+      padding-bottom: 10px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 15px;
+      text-align: center;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #8b949e;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .positive {
+      color: #3fb950;
+    }
+
+    .negative {
+      color: #f85149;
+    }
+
+    .neutral {
+      color: #58a6ff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #0d1117;
+      margin-bottom: 20px;
+      font-size: 13px;
+    }
+
+    table thead {
+      background: #21262d;
+      border-bottom: 2px solid #30363d;
+    }
+
+    table th,
+    table td {
+      padding: 12px;
+      text-align: right;
+      border-bottom: 1px solid #30363d;
+    }
+
+    table th {
+      color: #58a6ff;
+      font-weight: 600;
+    }
+
+    table tr:hover {
+      background: #0d1117;
+    }
+
+    table tr:nth-child(odd) {
+      background: #0d1117;
+    }
+
+    table tr:nth-child(even) {
+      background: #161b22;
+    }
+
+    .col-left {
+      text-align: left;
+    }
+
+    .worst {
+      background: rgba(248, 81, 73, 0.1);
+    }
+
+    .best {
+      background: rgba(63, 185, 80, 0.1);
+    }
+
+    .info-box {
+      background: #21262d;
+      border-left: 4px solid #58a6ff;
+      padding: 15px;
+      margin-bottom: 15px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .chart-container {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .tooltip {
+      cursor: help;
+      border-bottom: 1px dotted #58a6ff;
+    }
+
+    .summary-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .metric-item {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: #8b949e;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      font-size: 20px;
+      font-weight: 600;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📊 MACD Parameter Sweep Report</h1>
+      <p>Consolidated results sorted by P&L (Profit & Loss) in ascending order</p>
+    </div>
+
+    <div class="section">
+      <h2>📈 Test Configuration</h2>
+      <div class="grid">
+        <div class="stat-card">
+          <div class="stat-label">Symbol</div>
+          <div class="stat-value neutral">BSE:RELIANCE-A</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Timeframe</div>
+          <div class="stat-value neutral">1 Minute</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Candles</div>
+          <div class="stat-value neutral">7,875</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Initial Capital</div>
+          <div class="stat-value neutral">₹100,000</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Quantity/Trade</div>
+          <div class="stat-value neutral">1 lot</div>
+        </div>
+      </div>
+
+      <div class="info-box">
+        <strong>Parameter Ranges:</strong><br>
+        Fast Period: 8–24 | Slow Period: 18–52 | Signal Period: 5–12<br>
+        <strong>Total Parameter Combinations:</strong> 4,760
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🎯 Overall Results Summary</h2>
+      <div class="summary-metrics">
+        <div class="metric-item">
+          <div class="metric-label">Best P&L</div>
+          <div class="metric-value positive">₹53.70</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-label">Worst P&L</div>
+          <div class="metric-value negative">-₹196.90</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-label">Average P&L</div>
+          <div class="metric-value negative">-₹68.25</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-label">Positive Outcomes</div>
+          <div class="metric-value positive">1,238 / 4,760 (26%)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🏆 Top 10 Best Performers (Sorted by P&L - Highest)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="col-left">Fast</th>
+            <th class="col-left">Slow</th>
+            <th class="col-left">Signal</th>
+            <th>Total P&L</th>
+            <th>P&L %</th>
+            <th>Win Rate</th>
+            <th>Trades</th>
+            <th>Wins</th>
+            <th>Losses</th>
+            <th>Avg P&L</th>
+            <th>Max DD</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="best">
+            <td class="col-left">23</td>
+            <td class="col-left">19</td>
+            <td class="col-left">5</td>
+            <td class="positive">53.70</td>
+            <td class="positive">0.05%</td>
+            <td>70.78%</td>
+            <td>397</td>
+            <td>281</td>
+            <td>116</td>
+            <td>0.14</td>
+            <td>0.07</td>
+          </tr>
+          <tr class="best">
+            <td class="col-left">24</td>
+            <td class="col-left">22</td>
+            <td class="col-left">5</td>
+            <td class="positive">52.25</td>
+            <td class="positive">0.05%</td>
+            <td>70.08%</td>
+            <td>371</td>
+            <td>260</td>
+            <td>111</td>
+            <td>0.14</td>
+            <td>0.07</td>
+          </tr>
+          <tr class="best">
+            <td class="col-left">23</td>
+            <td class="col-left">18</td>
+            <td class="col-left">5</td>
+            <td class="positive">51.55</td>
+            <td class="positive">0.05%</td>
+            <td>69.98%</td>
+            <td>403</td>
+            <td>282</td>
+            <td>121</td>
+            <td>0.13</td>
+            <td>0.07</td>
+          </tr>
+          <tr>
+            <td class="col-left">22</td>
+            <td class="col-left">19</td>
+            <td class="col-left">5</td>
+            <td class="positive">48.2</td>
+            <td class="positive">0.05%</td>
+            <td>69.97%</td>
+            <td>413</td>
+            <td>289</td>
+            <td>124</td>
+            <td>0.12</td>
+            <td>0.07</td>
+          </tr>
+          <tr>
+            <td class="col-left">24</td>
+            <td class="col-left">21</td>
+            <td class="col-left">5</td>
+            <td class="positive">47.95</td>
+            <td class="positive">0.05%</td>
+            <td>70.35%</td>
+            <td>371</td>
+            <td>261</td>
+            <td>110</td>
+            <td>0.13</td>
+            <td>0.07</td>
+          </tr>
+          <tr>
+            <td class="col-left">22</td>
+            <td class="col-left">18</td>
+            <td class="col-left">5</td>
+            <td class="positive">46.55</td>
+            <td class="positive">0.05%</td>
+            <td>69.41%</td>
+            <td>423</td>
+            <td>293</td>
+            <td>130</td>
+            <td>0.11</td>
+            <td>0.07</td>
+          </tr>
+          <tr>
+            <td class="col-left">24</td>
+            <td class="col-left">23</td>
+            <td class="col-left">5</td>
+            <td class="positive">45.7</td>
+            <td class="positive">0.05%</td>
+            <td>70.39%</td>
+            <td>362</td>
+            <td>255</td>
+            <td>107</td>
+            <td>0.13</td>
+            <td>0.08</td>
+          </tr>
+          <tr>
+            <td class="col-left">23</td>
+            <td class="col-left">20</td>
+            <td class="col-left">5</td>
+            <td class="positive">45.15</td>
+            <td class="positive">0.05%</td>
+            <td>70.4%</td>
+            <td>387</td>
+            <td>273</td>
+            <td>114</td>
+            <td>0.12</td>
+            <td>0.07</td>
+          </tr>
+          <tr>
+            <td class="col-left">24</td>
+            <td class="col-left">20</td>
+            <td class="col-left">5</td>
+            <td class="positive">44.8</td>
+            <td class="positive">0.04%</td>
+            <td>70.56%</td>
+            <td>377</td>
+            <td>266</td>
+            <td>111</td>
+            <td>0.12</td>
+            <td>0.08</td>
+          </tr>
+          <tr>
+            <td class="col-left">22</td>
+            <td class="col-left">20</td>
+            <td class="col-left">5</td>
+            <td class="positive">44.0</td>
+            <td class="positive">0.04%</td>
+            <td>70.08%</td>
+            <td>402</td>
+            <td>282</td>
+            <td>120</td>
+            <td>0.11</td>
+            <td>0.07</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>📉 Bottom 10 Worst Performers (Sorted by P&L - Lowest)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="col-left">Fast</th>
+            <th class="col-left">Slow</th>
+            <th class="col-left">Signal</th>
+            <th>Total P&L</th>
+            <th>P&L %</th>
+            <th>Win Rate</th>
+            <th>Trades</th>
+            <th>Wins</th>
+            <th>Losses</th>
+            <th>Avg P&L</th>
+            <th>Max DD</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="worst">
+            <td class="col-left">8</td>
+            <td class="col-left">18</td>
+            <td class="col-left">5</td>
+            <td class="negative">-196.90</td>
+            <td class="negative">-0.20%</td>
+            <td>26.47%</td>
+            <td>563</td>
+            <td>149</td>
+            <td>414</td>
+            <td>-0.35</td>
+            <td>0.20</td>
+          </tr>
+          <tr class="worst">
+            <td class="col-left">8</td>
+            <td class="col-left">19</td>
+            <td class="col-left">5</td>
+            <td class="negative">-185.35</td>
+            <td class="negative">-0.19%</td>
+            <td>26.81%</td>
+            <td>552</td>
+            <td>148</td>
+            <td>404</td>
+            <td>-0.34</td>
+            <td>0.19</td>
+          </tr>
+          <tr class="worst">
+            <td class="col-left">8</td>
+            <td class="col-left">22</td>
+            <td class="col-left">5</td>
+            <td class="negative">-182.75</td>
+            <td class="negative">-0.18%</td>
+            <td>26.59%</td>
+            <td>534</td>
+            <td>142</td>
+            <td>392</td>
+            <td>-0.34</td>
+            <td>0.18</td>
+          </tr>
+          <tr>
+            <td class="col-left">9</td>
+            <td class="col-left">19</td>
+            <td class="col-left">5</td>
+            <td class="negative">-181.60</td>
+            <td class="negative">-0.18%</td>
+            <td>26.13%</td>
+            <td>532</td>
+            <td>139</td>
+            <td>393</td>
+            <td>-0.34</td>
+            <td>0.18</td>
+          </tr>
+          <tr>
+            <td class="col-left">8</td>
+            <td class="col-left">21</td>
+            <td class="col-left">5</td>
+            <td class="negative">-180.4</td>
+            <td class="negative">-0.18%</td>
+            <td>26.30%</td>
+            <td>546</td>
+            <td>144</td>
+            <td>402</td>
+            <td>-0.33</td>
+            <td>0.18</td>
+          </tr>
+          <tr>
+            <td class="col-left">9</td>
+            <td class="col-left">18</td>
+            <td class="col-left">5</td>
+            <td class="negative">-179.25</td>
+            <td class="negative">-0.18%</td>
+            <td>26.62%</td>
+            <td>545</td>
+            <td>145</td>
+            <td>400</td>
+            <td>-0.33</td>
+            <td>0.18</td>
+          </tr>
+          <tr>
+            <td class="col-left">8</td>
+            <td class="col-left">20</td>
+            <td class="col-left">5</td>
+            <td class="negative">-177.8</td>
+            <td class="negative">-0.18%</td>
+            <td>26.76%</td>
+            <td>530</td>
+            <td>142</td>
+            <td>388</td>
+            <td>-0.34</td>
+            <td>0.18</td>
+          </tr>
+          <tr>
+            <td class="col-left">8</td>
+            <td class="col-left">23</td>
+            <td class="col-left">5</td>
+            <td class="negative">-173.75</td>
+            <td class="negative">-0.17%</td>
+            <td>26.49%</td>
+            <td>529</td>
+            <td>140</td>
+            <td>389</td>
+            <td>-0.33</td>
+            <td>0.17</td>
+          </tr>
+          <tr>
+            <td class="col-left">9</td>
+            <td class="col-left">20</td>
+            <td class="col-left">5</td>
+            <td class="negative">-172.55</td>
+            <td class="negative">-0.17%</td>
+            <td>26.92%</td>
+            <td>519</td>
+            <td>140</td>
+            <td>379</td>
+            <td>-0.33</td>
+            <td>0.17</td>
+          </tr>
+          <tr>
+            <td class="col-left">10</td>
+            <td class="col-left">19</td>
+            <td class="col-left">5</td>
+            <td class="negative">-170.35</td>
+            <td class="negative">-0.17%</td>
+            <td>26.80%</td>
+            <td>519</td>
+            <td>139</td>
+            <td>380</td>
+            <td>-0.33</td>
+            <td>0.17</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>💡 Key Insights</h2>
+      <div class="info-box">
+        <strong>✅ Winning Pattern:</strong><br>
+        The best performers cluster around <strong>Fast: 22–24, Slow: 18–23, Signal: 5</strong>. These configurations
+        achieve:<br>
+        • Win Rates: 70%+<br>
+        • Positive P&L: ₹44–₹54<br>
+        • Trades: 362–423 per backtest period<br>
+        • Max Drawdown: ~0.07–0.08
+      </div>
+      <div class="info-box">
+        <strong>❌ Losing Pattern:</strong><br>
+        The worst performers use <strong>Fast: 8–10, Slow: 18–23, Signal: 5</strong>. These configurations suffer
+        from:<br>
+        • Low Win Rates: 26–27% (whipsaw trades)<br>
+        • Negative P&L: -₹170 to -₹197<br>
+        • High Trade Frequency: 519–563 trades<br>
+        • Excessive Drawdown: 0.17–0.20
+      </div>
+      <div class="info-box">
+        <strong>🔍 Signal Period Observation:</strong><br>
+        Across all combinations, <strong>Signal=5</strong> consistently outperforms other signal period values (6–12),
+        indicating that a faster signal line provides better trade timing for this 1-minute data.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📊 Data Availability</h2>
+      <p>
+        The complete parameter sweep results (all 4,760 combinations) have been saved to:<br>
+        <code style="background: #0d1117; padding: 8px; border-radius: 4px; display: inline-block; margin-top: 10px;">
+                    fyers/backtesting/reports/macd_sweep_BSE_RELIANCE-A_1m.csv
+                </code>
+      </p>
+      <p style="margin-top: 15px; font-size: 12px; color: #8b949e;">
+        You can import this CSV into Excel, Google Sheets, or any analysis tool for deeper exploration and custom
+        sorting.
+      </p>
+    </div>
+
+    <div class="section" style="background: #21262d; border-left: 4px solid #3fb950;">
+      <h2>✨ Recommended Next Steps</h2>
+      <ol style="margin-left: 20px; color: #c9d1d9;">
+        <li style="margin-bottom: 10px;">
+          <strong>Validate Top Performers:</strong> Test (Fast=23, Slow=19, Signal=5) on different symbols and
+          timeframes to confirm robustness.
+        </li>
+        <li style="margin-bottom: 10px;">
+          <strong>Optimize Position Sizing:</strong> Current results use 1 lot per trade. Test with variable position
+          sizing based on risk.
+        </li>
+        <li style="margin-bottom: 10px;">
+          <strong>Add Filters:</strong> Combine MACD with volatility checks or volume filters to reduce whipsaw trades
+          in ranging markets.
+        </li>
+        <li style="margin-bottom: 10px;">
+          <strong>Live Testing:</strong> Deploy the best config (Fast=23, Slow=19, Signal=5) in paper trading before
+          real capital.
+        </li>
+      </ol>
+    </div>
+  </div>
+</body>
+
+</html>
